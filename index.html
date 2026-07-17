@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>神田川 防災カルテ｜「神田川は、忘れていない」別館</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root{
+    --ink:#1c2430; --paper:#f7f8fa; --card:#ffffff; --line:#d9dee6;
+    --fact:#1e6fd9; --assume:#e07b00; --guess:#7a8494;
+    --danger:#c62828; --safe:#2e7d32; --accent:#0d47a1;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  body{font-family:"Hiragino Sans","Yu Gothic",Meiryo,sans-serif; background:var(--paper); color:var(--ink); line-height:1.65;}
+  header{background:#10233f; color:#fff; padding:14px 18px;}
+  header h1{font-size:1.25rem;}
+  header p{font-size:.8rem; opacity:.85;}
+  header a{color:#9ec5ff;}
+  #warnBanner{padding:10px 18px; font-size:.9rem; border-bottom:1px solid var(--line); background:#eef2f7;}
+  #warnBanner.active{background:#fdecea; color:var(--danger); font-weight:700;}
+  .wrap{display:grid; grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr); gap:14px; padding:14px 18px; max-width:1200px; margin:0 auto;}
+  @media(max-width:820px){.wrap{grid-template-columns:1fr;}}
+  .controls{grid-column:1/-1; display:flex; flex-wrap:wrap; gap:8px; align-items:center;}
+  .controls input[type=text]{flex:1; min-width:180px; padding:8px 10px; border:1px solid var(--line); border-radius:6px;}
+  button{padding:8px 14px; border:none; border-radius:6px; background:var(--accent); color:#fff; cursor:pointer; font-size:.9rem;}
+  button.sub{background:#5c6b7f;}
+  #map{height:520px; border-radius:10px; border:1px solid var(--line);}
+  @media(max-width:820px){#map{height:380px;}}
+  .panel{display:flex; flex-direction:column; gap:12px;}
+  .card{background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px 16px;}
+  .card h2{font-size:1rem; margin-bottom:8px; border-left:4px solid var(--accent); padding-left:8px;}
+  .depth-chip{display:inline-block; padding:2px 10px; border-radius:4px; border:1px solid rgba(0,0,0,.15); font-weight:700;}
+  .tag{display:inline-block; font-size:.7rem; padding:1px 8px; border-radius:10px; color:#fff; vertical-align:middle;}
+  .tag.fact{background:var(--fact);} .tag.assume{background:var(--assume);} .tag.guess{background:var(--guess);}
+  .legend{display:flex; flex-wrap:wrap; gap:6px; font-size:.72rem;}
+  .legend span{padding:2px 6px; border-radius:3px; border:1px solid rgba(0,0,0,.1);}
+  .demo-note{background:#fff8e1; border:1px solid #f0d264; border-radius:8px; padding:8px 10px; font-size:.8rem;}
+  .muted{color:#5c6b7f; font-size:.78rem;}
+  .shelter-safe{color:var(--safe); font-weight:700;} .shelter-ng{color:var(--danger); font-weight:700;}
+  footer{max-width:1200px; margin:8px auto 30px; padding:0 18px; font-size:.75rem; color:#4a5568;}
+  footer h3{font-size:.85rem; margin:14px 0 4px;}
+  footer ul{padding-left:18px;}
+  @media print{
+    header,#warnBanner,.controls,#map,.no-print,footer .no-print-f{display:none!important;}
+    .wrap{display:block; padding:0;}
+    .card{border:1px solid #000; page-break-inside:avoid;}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>神田川 防災カルテ <span style="font-size:.75rem; font-weight:400;">— あなたの場所の水害リスクを1枚に</span></h1>
+  <p>デジタルアーカイブ <a id="reearthLink" href="#" target="_blank" rel="noopener">「神田川は、忘れていない」</a> の別館アプリ／授業課題の試作品です</p>
+</header>
+
+<div id="warnBanner">気象警報の状態を確認中…</div>
+
+<div class="wrap">
+  <div class="controls">
+    <button id="btnGeo">📍 現在地で調べる</button>
+    <input type="text" id="addr" placeholder="住所で調べる（例: 中野区弥生町3丁目）">
+    <button id="btnAddr" class="sub">検索</button>
+    <span class="muted">／ 地図をクリックしても判定できます</span>
+  </div>
+
+  <div id="map"></div>
+
+  <div class="panel">
+    <div id="demoBanner" class="demo-note" hidden>⚠ <b>デモデータ表示中</b>: 避難所は架空のサンプルです。実データ（data/shelters.geojson）差し替え後にこの表示は消えます。</div>
+
+    <div class="card" id="card">
+      <h2>あなたの水害カルテ</h2>
+      <p class="muted">地点を選ぶと、ここに「想定浸水深」「水につからない最寄り避難所」「行動メモ」が表示されます。</p>
+    </div>
+
+    <div class="card">
+      <h2>凡例（想定最大規模の浸水深）<span class="tag assume">想定</span></h2>
+      <div class="legend" id="legend"></div>
+      <p class="muted" style="margin-top:6px;">地図の色つき区域は国のハザードマップポータル配信タイル（実データ）。想定＝特定条件のシミュレーションであり、実績ではありません。</p>
+    </div>
+
+    <div class="card">
+      <h2>あなたの記憶を、手わたしてください <span class="tag guess">記憶</span></h2>
+      <p style="font-size:.88rem;">神田川の水害の記憶（何年ごろ・どこで・どんな様子）を募集しています。お寄せいただいた記憶は、<b>中野区の水害被害記録・都の浸水実績</b>と照合（検証）したうえで、確からしさのラベル付きで本編マップに追加します。</p>
+      <p style="margin-top:8px;"><button id="btnForm">記憶を投稿する（フォームが開きます）</button></p>
+      <p class="muted">投稿→照合→掲載の流れで、このアーカイブは公開後も育ちます（原理③「更新」）。</p>
+    </div>
+
+    <div class="card no-print">
+      <h2>更新履歴</h2>
+      <ul style="font-size:.82rem; padding-left:18px;">
+        <li>v1.0（2026-07-17）試作公開。カルテ・警戒バナー・投稿ポストを実装。</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<footer>
+  <h3>出典・データ</h3>
+  <ul>
+    <li>浸水想定タイル: ハザードマップポータルサイト「洪水浸水想定区域（想定最大規模）」 https://disaportaldata.gsi.go.jp/raster/01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png</li>
+    <li>浸水深の地点判定: 国土数値情報 A31（洪水浸水想定区域・東京都）／避難所: 各区オープンデータ・国土数値情報P20（ArcGIS Onlineで浸水域との交差を解析）</li>
+    <li>気象警報: 気象庁 防災情報JSON（東京都）／背景地図: 国土地理院 淡色地図</li>
+    <li>取得日時・検証方法の全記録は本編「観測ログ」参照</li>
+  </ul>
+  <h3>免責（かならずお読みください）</h3>
+  <p>本アプリは大学授業課題の試作品です。表示は公開データに基づく<b>想定</b>であり、安全を保証するものではありません。実際の避難判断は、必ず気象庁・東京都・各区の公式情報と避難情報に従ってください。避難所の開設状況は災害時に各区が発表するものが正となります。</p>
+</footer>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Turf.js/6.5.0/turf.min.js"></script>
+<script>
+/* ================= 設定（公開前にここだけ書き換える） ================= */
+const CONFIG = {
+  REEARTH_URL: "https://example.com/your-reearth-url",      // ← Re:Earth公開URL
+  FORM_URL: "",                                             // ← Google FormsのURL（空なら案内を表示）
+  DATA_FLOOD: "data/flood.geojson",                         // A31（浸水深属性つき）※任意
+  DATA_SHELTERS: "data/shelters.geojson",                   // 避難所（ArcGIS解析済み）※無ければデモ
+  DEPTH_PROPS: ["A31_205","A31a_205","浸水深ランク","rank","depth"], // A31の浸水深属性名の候補（要確認）
+  SHELTER_NAME_PROPS: ["name","名称","P20_002","施設名"],
+  SHELTER_FLOOD_PROPS: ["flooded","浸水域内","in_flood"],
+  // 浸水深ランク→表示（国交省ランクコード。凡例と要照合＝「要検証」）
+  RANKS: {1:{t:"0.5m未満",c:"#f7f5a9"},2:{t:"0.5〜3m",c:"#ffd8c0"},3:{t:"3〜5m",c:"#ffb7b7"},
+          4:{t:"5〜10m",c:"#ff9191"},5:{t:"10〜20m",c:"#f285c9"},6:{t:"20m以上",c:"#dc7adc"}},
+  JMA_URL: "https://www.jma.go.jp/bosai/warning/data/warning/130000.json", // 東京都
+  JMA_AREAS: {"1310400":"新宿区","1310500":"文京区","1311400":"中野区","1311500":"杉並区"},
+  JMA_CODES: {"03":"大雨警報","04":"洪水警報","10":"大雨注意報","18":"洪水注意報"}, // 要検証
+  WALK_M_PER_MIN: 67  // 徒歩速度 約4km/h
+};
+const MEMO = {
+  1:"床下〜床上浸水のおそれ。地下・半地下からは早めに退避。",
+  2:"1階の天井近くまで浸水しうる深さ。2階以上への垂直避難か、早めの立退き避難を。",
+  3:"2階も浸水しうる深さ。浸水域の外への立退き避難を基本に。",
+  4:"家屋がほぼ水没する深さ。早期の広域避難が必要。",
+  5:"家屋がほぼ水没する深さ。早期の広域避難が必要。",
+  6:"家屋がほぼ水没する深さ。早期の広域避難が必要。"
+};
+/* デモ避難所（架空。実データ差し替えで自動的に無効化） */
+const DEMO_SHELTERS = {type:"FeatureCollection",features:[
+ {type:"Feature",properties:{name:"【デモ】サンプル避難所A（高台側）",flooded:false},geometry:{type:"Point",coordinates:[139.6800,35.6980]}},
+ {type:"Feature",properties:{name:"【デモ】サンプル避難所B（低地側）",flooded:true },geometry:{type:"Point",coordinates:[139.6720,35.6890]}},
+ {type:"Feature",properties:{name:"【デモ】サンプル避難所C",flooded:false},geometry:{type:"Point",coordinates:[139.7000,35.7050]}},
+ {type:"Feature",properties:{name:"【デモ】サンプル避難所D（低地側）",flooded:true },geometry:{type:"Point",coordinates:[139.7300,35.7100]}},
+ {type:"Feature",properties:{name:"【デモ】サンプル避難所E（台地側）",flooded:false},geometry:{type:"Point",coordinates:[139.7260,35.7140]}}
+]};
+
+/* ================= 初期化 ================= */
+document.getElementById("reearthLink").href = CONFIG.REEARTH_URL;
+const legendBox = document.getElementById("legend");
+Object.values(CONFIG.RANKS).forEach(r=>{ legendBox.insertAdjacentHTML("beforeend",`<span style="background:${r.c}">${r.t}</span>`); });
+
+const map = L.map("map").setView([35.700,139.690],13);
+L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png",
+  {attribution:"地図: 国土地理院", maxZoom:18}).addTo(map);
+const floodTiles = L.tileLayer("https://disaportaldata.gsi.go.jp/raster/01_flood_l2_shinsuishin_data/{z}/{x}/{y}.png",
+  {attribution:"浸水想定: ハザードマップポータルサイト", opacity:.55, maxNativeZoom:17, maxZoom:18}).addTo(map);
+L.control.layers(null,{ "浸水想定（想定最大規模）":floodTiles }).addTo(map);
+
+let floodData=null, shelters=null, usingDemo=false, pinMarker=null, shelterLayer=null, routeLine=null;
+
+async function loadData(){
+  try{ const r=await fetch(CONFIG.DATA_FLOOD); if(r.ok) floodData=await r.json(); }catch(e){}
+  try{ const r=await fetch(CONFIG.DATA_SHELTERS); if(r.ok) shelters=await r.json(); }catch(e){}
+  if(!shelters){ shelters=DEMO_SHELTERS; usingDemo=true; document.getElementById("demoBanner").hidden=false; }
+  drawShelters();
+}
+function prop(o,cands){ for(const k of cands){ if(o && o[k]!==undefined && o[k]!==null) return o[k]; } return undefined; }
+function isFlooded(p){ const v=prop(p,CONFIG.SHELTER_FLOOD_PROPS); return v===true||v===1||v==="true"||v==="1"||v==="域内"||v==="はい"; }
+function drawShelters(){
+  if(shelterLayer) shelterLayer.remove();
+  shelterLayer=L.layerGroup(shelters.features.map(f=>{
+    const [lng,lat]=f.geometry.coordinates, ng=isFlooded(f.properties);
+    return L.circleMarker([lat,lng],{radius:7,color:"#fff",weight:2,fillColor:ng?"#c62828":"#2e7d32",fillOpacity:.95})
+      .bindPopup(`${prop(f.properties,CONFIG.SHELTER_NAME_PROPS)||"避難所"}<br>${ng?"⚠ 浸水想定域<b>内</b>":"✅ 浸水想定域外"}`);
+  })).addTo(map);
+}
+
+/* ================= 判定 ================= */
+function depthAt(lat,lng){
+  if(!floodData) return null;
+  const pt=turf.point([lng,lat]);
+  let best=null;
+  for(const f of floodData.features){
+    try{ if(turf.booleanPointInPolygon(pt,f)){ const v=Number(prop(f.properties,CONFIG.DEPTH_PROPS)); if(!isNaN(v)&&(best===null||v>best)) best=v; } }catch(e){}
+  }
+  return best; // ランク値（最大） or null
+}
+function nearestShelters(lat,lng){
+  const from=turf.point([lng,lat]);
+  const list=shelters.features.map(f=>({f,ng:isFlooded(f.properties),
+    d:turf.distance(from,turf.point(f.geometry.coordinates),{units:"meters"})})).sort((a,b)=>a.d-b.d);
+  return { safe:list.find(x=>!x.ng), any:list[0] };
+}
+function judge(lat,lng,label){
+  if(pinMarker) pinMarker.remove(); if(routeLine) routeLine.remove();
+  pinMarker=L.marker([lat,lng]).addTo(map); map.setView([lat,lng],15);
+  const rank=depthAt(lat,lng), {safe,any}=nearestShelters(lat,lng);
+  let depthHtml;
+  if(floodData){
+    depthHtml = rank ? `<span class="depth-chip" style="background:${CONFIG.RANKS[rank]?.c||"#eee"}">${CONFIG.RANKS[rank]?.t||("ランク"+rank)}</span> <span class="tag assume">想定</span>`
+                     : `<span class="depth-chip" style="background:#e8f5e9">浸水想定区域の外</span> <span class="tag assume">想定</span>`;
+  }else{
+    depthHtml = `<span class="muted">数値判定データ（A31）未読込 — 地図の色と凡例で確認してください</span>`;
+  }
+  let shelterHtml="";
+  if(safe){
+    const min=Math.ceil(safe.d/CONFIG.WALK_M_PER_MIN);
+    shelterHtml=`<span class="shelter-safe">✅ ${prop(safe.f.properties,CONFIG.SHELTER_NAME_PROPS)}</span><br>約${Math.round(safe.d)}m・徒歩約${min}分（浸水想定域の外）`;
+    routeLine=L.polyline([[lat,lng],[safe.f.geometry.coordinates[1],safe.f.geometry.coordinates[0]]],{dashArray:"6 6",color:"#2e7d32"}).addTo(map);
+    if(any && any.f!==safe.f && any.ng){
+      shelterHtml+=`<br><span class="muted">※最も近い「${prop(any.f.properties,CONFIG.SHELTER_NAME_PROPS)}」（約${Math.round(any.d)}m）は<span class="shelter-ng">浸水想定域内</span>のため除外</span>`;
+    }
+  }else{ shelterHtml=`<span class="shelter-ng">近隣に浸水域外の避難所が見つかりません（データ範囲外の可能性）</span>`; }
+  const memo = rank ? MEMO[rank] : "浸水想定区域の外でも、内水氾濫（下水があふれる浸水）は起こりえます（例: 2025年7月 阿佐ケ谷駅付近の冠水）。大雨時は最新情報の確認を。";
+  document.getElementById("card").innerHTML = `
+    <h2>あなたの水害カルテ <button class="sub no-print" style="float:right" onclick="window.print()">🖨 印刷</button></h2>
+    <p class="muted">${label||`地点: ${lat.toFixed(4)}, ${lng.toFixed(4)}`}／判定日時: ${new Date().toLocaleString("ja-JP")}</p>
+    <p style="margin:8px 0;"><b>想定最大の浸水深</b>: ${depthHtml}</p>
+    <p style="margin:8px 0;"><b>水につからない最寄り避難所</b> <span class="tag fact">位置=事実</span> <span class="tag assume">浸水判定=想定</span><br>${shelterHtml}</p>
+    <p style="margin:8px 0;"><b>行動メモ</b>: ${memo}</p>
+    <p class="muted">前提: 想定最大規模降雨（神田川流域: 1時間153mm・24時間690mm、2024年改定）に基づくシミュレーション。実績ではありません。${usingDemo?"<b>【避難所はデモデータ】</b>":""}</p>`;
+}
+
+/* ================= 入力3系統 ================= */
+map.on("click",e=>judge(e.latlng.lat,e.latlng.lng));
+document.getElementById("btnGeo").onclick=()=>{
+  navigator.geolocation ? navigator.geolocation.getCurrentPosition(
+    p=>judge(p.coords.latitude,p.coords.longitude,"現在地"),
+    ()=>alert("現在地を取得できませんでした。地図クリックでお試しください。"))
+  : alert("この端末では現在地を利用できません。");
+};
+document.getElementById("btnAddr").onclick=async()=>{
+  const q=document.getElementById("addr").value.trim(); if(!q) return;
+  try{
+    const r=await fetch("https://msearch.gsi.go.jp/address-search/AddressSearch?q="+encodeURIComponent(q));
+    const js=await r.json();
+    if(js.length){ const [lng,lat]=js[0].geometry.coordinates; judge(lat,lng,js[0].properties.title); }
+    else alert("住所が見つかりませんでした。地図クリックでお試しください。");
+  }catch(e){ alert("住所検索に接続できませんでした（通信/CORS）。地図クリックでお試しください。"); }
+};
+
+/* ================= 気象警報バナー ================= */
+(async function warn(){
+  const el=document.getElementById("warnBanner");
+  try{
+    const r=await fetch(CONFIG.JMA_URL); const js=await r.json();
+    const hits=[];
+    (js.areaTypes||[]).forEach(t=>(t.areas||[]).forEach(a=>{
+      const ward=CONFIG.JMA_AREAS[a.code]; if(!ward) return;
+      (a.warnings||[]).forEach(w=>{ const nm=CONFIG.JMA_CODES[w.code];
+        if(nm && w.status && w.status!=="解除") hits.push(`${ward}:${nm}`); });
+    }));
+    const time=js.reportDatetime?new Date(js.reportDatetime).toLocaleString("ja-JP"):"";
+    if(hits.length){ el.className="active"; el.innerHTML=`🚨 発表中: ${[...new Set(hits)].join("／")}（気象庁 ${time}）<span class="tag fact">事実</span>`; }
+    else{ el.innerHTML=`✅ 現在、流域4区（中野・杉並・新宿・文京）に大雨・洪水の警報/注意報は出ていません（気象庁 ${time}）<span class="tag fact">事実</span>`; }
+  }catch(e){
+    el.innerHTML=`⚠ 警報情報を自動取得できませんでした。<a href="https://www.jma.go.jp/bosai/warning/#area_type=class20s&area_code=1311400" target="_blank" rel="noopener">気象庁の警報ページ</a>／<a href="https://www.kasen-suibo.metro.tokyo.lg.jp/" target="_blank" rel="noopener">東京都水防災総合情報システム</a>で確認してください。`;
+  }
+})();
+
+/* ================= 投稿フォーム ================= */
+document.getElementById("btnForm").onclick=()=>{
+  if(CONFIG.FORM_URL) window.open(CONFIG.FORM_URL,"_blank");
+  else alert("フォームURLが未設定です。README（公開手順）の手順3でGoogleフォームを作成し、CONFIG.FORM_URL に貼ってください。");
+};
+
+loadData();
+</script>
+</body>
+</html>
